@@ -1,0 +1,559 @@
+AWSTemplateFormatVersion: 2010-09-09 
+Description: Network architecture. VPC, IGW, Subnet , DB SubnetGroup , Routetable , (NatGateway).
+
+#-----------------------------------------------------------------------------------#
+Parameters:
+#-----------------------------------------------------------------------------------#
+  ServiceName:
+    Type: String
+    Description: "input your System(Project) Name"
+    AllowedPattern: '[a-z0-9][a-z0-9-]*[a-z0-9]'
+    Default: testapp
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - load
+      - dev
+      - stg
+      - prod
+  MultiAZNumber:
+    Description: "Choose AZ Number / if choose 2 , Create Subnet in two AZs."
+    Type: Number
+    Default: 3
+    AllowedValues:
+      - 2
+      - 3
+  EnableNatGateway:
+    Description: Enable NAT Gateway.
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+  VpcCidr:
+    Description: CIDR block for VPC. format is 10.x.0.0/16
+    ConstraintDescription: CIDR block parameter must be in the form 10.x.0.0/16
+    Type: String
+    AllowedPattern: ^((10\.)([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.0\.0\/16)$
+    Default: 10.0.0.0/16
+    
+
+#-----------------------------------------------------------------------------------#
+Metadata:
+#-----------------------------------------------------------------------------------#
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Common Configuration"
+        Parameters: 
+          - ServiceName
+          - EnvName
+      - 
+        Label: 
+          default: "VPC+Subnet Configuration"
+        Parameters: 
+          - VpcCidr
+          - MultiAZNumber
+          - EnableNatGateway
+
+#-----------------------------------------------------------------------------------#
+# Mappings:
+#-----------------------------------------------------------------------------------#
+
+
+#-----------------------------------------------------------------------------------#
+Conditions:
+#-----------------------------------------------------------------------------------#
+  IsTripleAZ: !Equals [!Ref MultiAZNumber , "3"]
+  IsEnableNatGateway: !Equals [true, !Ref EnableNatGateway]
+  IsTripleAZAndEnableNatGateway: !And [!Equals [!Ref MultiAZNumber , "3"], !Equals [true, !Ref EnableNatGateway]]
+
+#-----------------------------------------------------------------------------------#
+Resources:
+#-----------------------------------------------------------------------------------#
+  #---------------------------------------------------------------------------------#
+  # VPC
+  #---------------------------------------------------------------------------------#
+  VPC: 
+    Type: 'AWS::EC2::VPC' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: 'default' 
+  FlowLog:
+    Type: "AWS::EC2::FlowLog"
+    Properties:
+      ResourceId: !Ref VPC
+      TrafficType: "ALL"
+      LogDestinationType: "s3"
+      LogDestination: 
+        Fn::ImportValue: !Sub ${ServiceName}-${EnvName}-S3BucketVPCFlowLogArn
+      ResourceType: "VPC"
+      MaxAggregationInterval: 60
+      Tags: 
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+  IGW: 
+    Type: 'AWS::EC2::InternetGateway' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+  VPCGatewayAttachment:  
+    Type: 'AWS::EC2::VPCGatewayAttachment' 
+    Properties:  
+      InternetGatewayId: !Ref IGW 
+      VpcId: !Ref VPC  
+
+  #---------------------------------------------------------------------------------#
+  # Subnet
+  #---------------------------------------------------------------------------------#
+  Public0: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_0
+        - Key: Env
+          Value: !Ref EnvName
+  Public1: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_1
+        - Key: Env
+          Value: !Ref EnvName
+  Public2: 
+    Type: 'AWS::EC2::Subnet'
+    Condition: IsTripleAZ
+    Properties: 
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 2, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.2.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_2
+        - Key: Env
+          Value: !Ref EnvName
+
+  Protected0: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 64, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.64.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_0
+        - Key: Env
+          Value: !Ref EnvName
+  Protected1: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 65, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.65.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_1
+        - Key: Env
+          Value: !Ref EnvName 
+  Protected2: 
+    Type: 'AWS::EC2::Subnet'
+    Condition: IsTripleAZ
+    Properties: 
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 66, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.66.0/24
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_2
+        - Key: Env
+          Value: !Ref EnvName
+
+  Private0: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 128, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.128.0/24
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-private_0
+        - Key: Env
+          Value: !Ref EnvName
+  Private1: 
+    Type: 'AWS::EC2::Subnet' 
+    Properties: 
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 129, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.129.0/24
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-private_1
+        - Key: Env
+          Value: !Ref EnvName
+  Private2: 
+    Type: 'AWS::EC2::Subnet'
+    Condition: IsTripleAZ
+    Properties: 
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      VpcId: !Ref VPC 
+      CidrBlock: !Select [ 130, !Cidr [ !GetAtt VPC.CidrBlock, 131, 8 ]] # 10.x.130.0/24
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-private_2
+        - Key: Env
+          Value: !Ref EnvName
+  #---------------------------------------------------------------------------------#
+  # DB SubnetGroup
+  #---------------------------------------------------------------------------------#
+  DBSubnetGroup: 
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: !Sub "${ServiceName}-DBSubnetGroup"
+      SubnetIds:
+        - !Ref Private0	
+        - !Ref Private1
+        - !If [IsTripleAZ, !Ref Private2, !Ref "AWS::NoValue" ]
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-dbsubnetgroup
+        - Key: Env
+          Value: !Ref EnvName
+  #---------------------------------------------------------------------------------#
+  # NatGateway
+  #---------------------------------------------------------------------------------#
+  NatGateway0:
+    Type: AWS::EC2::NatGateway
+    Condition: IsEnableNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP0.AllocationId
+      SubnetId: !Ref Public0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_0-natgateway
+        - Key: Env
+          Value: !Ref EnvName
+  
+  NatGatewayEIP0:
+    Type: AWS::EC2::EIP
+    Condition: IsEnableNatGateway
+    Properties:
+      Domain: vpc
+    DependsOn: VPC
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Condition: IsEnableNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP1.AllocationId
+      SubnetId: !Ref Public1
+      Tags:
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_1-natgateway
+        - Key: Env
+          Value: !Ref EnvName
+  
+  NatGatewayEIP1:
+    Type: AWS::EC2::EIP
+    Condition: IsEnableNatGateway
+    Properties:
+      Domain: vpc
+    DependsOn: VPC
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Condition: IsTripleAZAndEnableNatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP2.AllocationId
+      SubnetId: !Ref Public2
+      Tags:
+        - Key: Name
+          Value: !Sub ${ServiceName}-public_2-natgateway
+        - Key: Env
+          Value: !Ref EnvName
+  
+  NatGatewayEIP2:
+    Type: AWS::EC2::EIP
+    Condition: IsTripleAZAndEnableNatGateway
+    Properties:
+      Domain: vpc
+    DependsOn: VPC
+
+  #---------------------------------------------------------------------------------#
+  # Routing Setting
+  #---------------------------------------------------------------------------------#
+  PublicRouteTable: 
+    Type: 'AWS::EC2::RouteTable' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-public-routetable
+        - Key: Env
+          Value: !Ref EnvName
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  PublicSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Public0
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Public1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsTripleAZ
+    Properties:
+      SubnetId: !Ref Public2
+      RouteTableId: !Ref PublicRouteTable
+
+  ProtectedRouteTable0:
+    Type: 'AWS::EC2::RouteTable' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_0-routetable
+        - Key: Env
+          Value: !Ref EnvName
+      VpcId: !Ref VPC
+
+  ProtectedRoute0:
+    Type: AWS::EC2::Route
+    Condition: IsEnableNatGateway
+    Properties:
+      RouteTableId: !Ref ProtectedRouteTable0
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway0
+
+  ProtectedSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Protected0
+      RouteTableId: !Ref ProtectedRouteTable0
+
+  ProtectedRouteTable1:
+    Type: 'AWS::EC2::RouteTable' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_1-routetable
+        - Key: Env
+          Value: !Ref EnvName
+      VpcId: !Ref VPC
+
+  ProtectedRoute1:
+    Type: AWS::EC2::Route
+    Condition: IsEnableNatGateway
+    Properties:
+      RouteTableId: !Ref ProtectedRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  ProtectedSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Protected1
+      RouteTableId: !Ref ProtectedRouteTable1
+
+  ProtectedRouteTable2:
+    Type: 'AWS::EC2::RouteTable' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-protected_2-routetable
+        - Key: Env
+          Value: !Ref EnvName
+      VpcId: !Ref VPC
+
+  ProtectedRoute2:
+    Type: AWS::EC2::Route
+    Condition: IsTripleAZAndEnableNatGateway
+    Properties:
+      RouteTableId: !Ref ProtectedRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  ProtectedSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsTripleAZ
+    Properties:
+      SubnetId: !Ref Protected2
+      RouteTableId: !Ref ProtectedRouteTable2
+
+  PrivateRouteTable: 
+    Type: 'AWS::EC2::RouteTable' 
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ServiceName}-private-routetable
+        - Key: Env
+          Value: !Ref EnvName
+      VpcId: !Ref VPC
+
+  PrivateSubnetRouteTableAssociation0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Private0
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Private1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: IsTripleAZ
+    Properties:
+      SubnetId: !Ref Private2
+      RouteTableId: !Ref PrivateRouteTable
+
+#-----------------------------------------------------------------------------------#
+Outputs:
+#-----------------------------------------------------------------------------------#
+  VpcID:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-VpcID
+
+  IgwID:
+    Value: !Ref IGW
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-IgwID
+
+  Public0:
+    Value: !Ref Public0
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-public0
+
+  Public1:
+    Value: !Ref Public1
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-public1
+
+  Public2:
+    Condition: IsTripleAZ
+    Value: !Ref Public2
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-public2
+
+  Protected0:
+    Value: !Ref Protected0
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected0
+
+  Protected1:
+    Value: !Ref Protected1
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected1
+
+  Protected2:
+    Condition: IsTripleAZ
+    Value: !Ref Protected2
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected2
+
+  Private0:
+    Value: !Ref Private0	
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-private0
+
+  Private1:
+    Value: !Ref Private1
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-private1
+
+  Private2:
+    Condition: IsTripleAZ
+    Value: !Ref Private2
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-private2
+
+  DbSubnetGroup:
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-dbsubnetgroup
+
+  PublicRouteTable:
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-public-routetable
+  
+  ProtectedRouteTable0:
+    Value: !Ref ProtectedRouteTable0
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected-routetable0
+
+  ProtectedRouteTable1:
+    Value: !Ref ProtectedRouteTable1
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected-routetable1
+
+  ProtectedRouteTable2:
+    Condition: IsTripleAZ
+    Value: !Ref ProtectedRouteTable2
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-protected-routetable2
+
+  PrivateRouteTable:
+    Value: !Ref PrivateRouteTable
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-private-routetable
+

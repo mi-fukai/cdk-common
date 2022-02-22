@@ -1,0 +1,377 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create S3 Bucket(log).When replication is enabled, it creates an SNS topic for event notification.
+
+#-----------------------------------------------------------------------------------#
+Parameters:
+#-----------------------------------------------------------------------------------#
+  ServiceName:
+    Type: String
+    Description: "input your System(Project) Name"
+    AllowedPattern: '[a-z0-9][a-z0-9-]*[a-z0-9]'
+
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - load
+      - dev
+      - stg
+      - prod
+
+  MailAddress:
+    Type: String
+    Description: "Email Address for S3 Replication notification. Required if replication is enabled."
+    Default: ""
+
+  ExpirationDays: 
+    Type: Number
+    Description: "The days for the Expiration rule."
+    Default: 1827
+
+  ReplicationStatus:
+    Type: String
+    Description: "Set 'Enabled' to replicate to another bucket."
+    Default: Disabled
+    AllowedValues:
+      - Disabled
+      - Enabled
+
+  ReplicationBucketName:
+    Type: String
+    Description: "Enter the name of the replication destination S3 bucket. Ex: ${ServiceName}-${EnvName}-log-analysis-bucket"
+    Default: ""
+
+  VPCFlowLogExpirationDays:
+    Type: Number
+    Description: "The days for the Expiration rule for VPC Flow log."
+    Default: 1827
+
+#-----------------------------------------------------------------------------------#
+Metadata:
+#-----------------------------------------------------------------------------------#
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Common Configuration"
+        Parameters: 
+          - ServiceName
+          - EnvName
+      - 
+        Label: 
+          default: "S3(VPC Flow log) Configuration"
+        Parameters: 
+          - VPCFlowLogExpirationDays
+      - 
+        Label: 
+          default: "S3(General log) Configuration"
+        Parameters: 
+          - ExpirationDays
+          - ReplicationStatus
+          - ReplicationBucketName
+          - MailAddress
+
+#-----------------------------------------------------------------------------------#
+Mappings:
+#-----------------------------------------------------------------------------------#
+  S3Config:
+    us-east-1:
+      BucketPrincipal: '127311923021'
+    us-east-2:
+      BucketPrincipal: '033677994240'
+    us-west-1:
+      BucketPrincipal: '027434742980'
+    us-west-2:
+      BucketPrincipal: '797873946194'
+    ca-central-1:
+      BucketPrincipal: '985666609251'
+    eu-central-1:
+      BucketPrincipal: '054676820928'
+    eu-west-1:
+      BucketPrincipal: '156460612806'
+    eu-west-2:
+      BucketPrincipal: '652711504416'
+    eu-west-3:
+      BucketPrincipal: '009996457667'
+    eu-north-1:
+      BucketPrincipal: '897822967062'
+    ap-east-1:
+      BucketPrincipal: '754344448648'
+    ap-northeast-1:
+      BucketPrincipal: '582318560864'
+    ap-northeast-2:
+      BucketPrincipal: '600734575887'
+    ap-northeast-3:
+      BucketPrincipal: '383597477331'
+    ap-southeast-1:
+      BucketPrincipal: '114774131450'
+    ap-southeast-2:
+      BucketPrincipal: '783225319266'
+    ap-south-1:
+      BucketPrincipal: '718504428378'
+    sa-east-1:
+      BucketPrincipal: '507241528517'
+    us-gov-west-1:
+      BucketPrincipal: '048591011584'
+    us-gov-east-1:
+      BucketPrincipal: '190560391635'
+    cn-north-1:
+      BucketPrincipal: '638102146993'
+    cn-northwest-1:
+      BucketPrincipal: '037604701340'
+
+#-----------------------------------------------------------------------------------#
+Conditions:
+#-----------------------------------------------------------------------------------#
+  EnableS3Replication: !Equals [!Ref ReplicationStatus, "Enabled"]
+
+#-----------------------------------------------------------------------------------#
+Resources:
+#-----------------------------------------------------------------------------------#
+  #---------------------------------------------------------------------------------#
+  # S3-replicate-IAMRole
+  #---------------------------------------------------------------------------------#
+  ReplicationPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: EnableS3Replication
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - s3:Get*
+              - s3:ListBucket
+            Effect: Allow
+            Resource:
+              - !Sub arn:aws:s3:::${ServiceName}-${EnvName}-log
+              - !Sub arn:aws:s3:::${ServiceName}-${EnvName}-log/*
+          - Action:
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+              - s3:ReplicateTags
+              - s3:GetObjectVersionTagging
+              - s3:ObjectOwnerOverrideToBucketOwner
+            Effect: Allow
+            Resource: !Sub arn:aws:s3:::${ReplicationBucketName}/*
+      Roles:
+        - !Ref ReplicationRole
+  ReplicationRole:
+    Type: "AWS::IAM::Role"
+    Condition: EnableS3Replication
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Tags: 
+        - Key: Name 
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+
+  #---------------------------------------------------------------------------------#
+  # SNS for Replication Event Notification
+  #---------------------------------------------------------------------------------#
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableS3Replication
+    Properties:
+      TopicName: !Sub ${ServiceName}-${EnvName}-s3repl-alert
+      Tags: 
+        - Key: Env
+          Value: !Ref EnvName
+        - Key: Name 
+          Value: !Ref ServiceName
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Condition: EnableS3Replication
+    Properties:
+      Endpoint: !Ref 'MailAddress'
+      Protocol: email
+      TopicArn: !Ref 'SNSTopic'
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: EnableS3Replication
+    Properties:
+      PolicyDocument:
+        Id: MyTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Statement-id
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: sns:Publish
+            Resource: !Ref 'SNSTopic'
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:s3:::${ServiceName}-${EnvName}-log
+      Topics:
+        - !Ref 'SNSTopic'
+
+  #---------------------------------------------------------------------------------#
+  # S3 Bucket For Log
+  #---------------------------------------------------------------------------------#
+  S3BucketLog:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ServiceName}-${EnvName}-log
+      AccessControl: LogDeliveryWrite
+      NotificationConfiguration:
+        !If
+          - EnableS3Replication
+          -
+            TopicConfigurations:
+              - Topic: !Ref 'SNSTopic'
+                Event: s3:Replication:OperationFailedReplication
+              - Topic: !Ref 'SNSTopic'
+                Event: s3:Replication:OperationReplicatedAfterThreshold
+              - Topic: !Ref 'SNSTopic'
+                Event: s3:Replication:OperationNotTracked
+          - !Ref "AWS::NoValue"
+      LifecycleConfiguration:
+        Rules:
+          - 
+            Id: rotation-rule
+            ExpirationInDays: !Ref ExpirationDays
+            NoncurrentVersionExpirationInDays: !If [EnableS3Replication, !Ref ExpirationDays, !Ref "AWS::NoValue"]
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 30
+            Status: Enabled
+      ReplicationConfiguration:
+        !If
+          - EnableS3Replication
+          -
+            Role: !GetAtt ReplicationRole.Arn
+            Rules:
+              - Id: Replication-Rule
+                Status: Enabled
+                Prefix: ""
+                Destination:
+                  Bucket: !Sub arn:aws:s3:::${ReplicationBucketName}
+                  StorageClass: STANDARD
+          - !Ref "AWS::NoValue"
+      VersioningConfiguration:
+        !If
+          - EnableS3Replication
+          -
+            Status: Enabled
+          - !Ref "AWS::NoValue" 
+      Tags:
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+  S3BucketLogsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketLog
+      PolicyDocument:
+        Id: ElblogsBucketPolicy
+        Statement:
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketLog}/*'
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: AWSLogDeliveryAclCheck
+            Effect: Allow
+            Action:
+              - s3:GetBucketAcl
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketLog}'
+            Principal:
+              Service: delivery.logs.amazonaws.com
+          - Sid: AddPerm
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketLog}/*'
+            Principal:
+              AWS: !FindInMap [S3Config, !Ref 'AWS::Region', BucketPrincipal ]
+  S3BucketVPCFlowLog:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ServiceName}-${EnvName}-vpc-flow-log
+      AccessControl: LogDeliveryWrite
+      LifecycleConfiguration:
+        Rules:
+          - 
+            Id: rotation-rule
+            ExpirationInDays: !Ref VPCFlowLogExpirationDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 30
+            Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+  S3BucketVPCFlowLogsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketVPCFlowLog
+      PolicyDocument:
+        Id: ElblogsBucketPolicy
+        Statement:
+          - Sid: AWSLogDeliveryWrite
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketVPCFlowLog}/*'
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: AWSLogDeliveryAclCheck
+            Effect: Allow
+            Action:
+              - s3:GetBucketAcl
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketVPCFlowLog}'
+            Principal:
+              Service: delivery.logs.amazonaws.com
+          - Sid: AddPerm
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${S3BucketVPCFlowLog}/*'
+            Principal:
+              AWS: !FindInMap [S3Config, !Ref 'AWS::Region', BucketPrincipal ]
+
+#-----------------------------------------------------------------------------------#
+Outputs:
+#-----------------------------------------------------------------------------------#
+  S3BucketLogName:
+    Value: !Ref S3BucketLog
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-S3BucketLogName
+  S3BucketLogDomainName:
+    Value: !GetAtt S3BucketLog.DomainName
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-S3BucketLogDomainName
+  S3BucketLogArn:
+    Value: !GetAtt S3BucketLog.Arn
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-S3BucketLogArn
+  S3BucketVPCFlowLogArn:
+    Value: !GetAtt S3BucketVPCFlowLog.Arn
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-S3BucketVPCFlowLogArn
+
