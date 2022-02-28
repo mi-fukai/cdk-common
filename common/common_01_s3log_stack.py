@@ -6,7 +6,7 @@ from aws_cdk import (
 from constructs import Construct
 import common.constants
 
-class Common_01_S3LogStack(Stack):
+class Common-01-S3LogStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
