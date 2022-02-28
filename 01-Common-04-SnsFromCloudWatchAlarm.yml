@@ -102,3 +102,11 @@ Resources:
             Resource: !Ref SNSTopic
       Topics:
         - !Ref SNSTopic
+
+#-----------------------------------------------------------------------------------#
+Outputs:
+#-----------------------------------------------------------------------------------#
+  AWSCloudWatchAlarmSNSTopicArn:
+    Value: !Ref SNSTopic
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-cwalarm-topic
