@@ -6,12 +6,12 @@ from aws_cdk import (
 from constructs import Construct
 import common.constants
 
-class Common_03_SGStack(Stack):
+class C01-S3LogStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         template = cfn_inc.CfnInclude(self, "Template",
-            template_file="01-Common-03-SecurityGroup.yml",
+            template_file="01-Common-01-S3Log.yml",
             parameters=dict(ServiceName=common.constants.SERVICE_NAME),
             preserve_logical_ids=False)

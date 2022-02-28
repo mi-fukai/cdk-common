@@ -3,12 +3,12 @@ import os
 
 import aws_cdk as cdk
 
-from common.common_01_s3log_stack import Common-01-S3LogStack
-from common.common_02_vpc_stack import Common_02_VpcStack
-from common.common_03_sg_stack import Common_03_SGStack
+from common.c01_s3log_stack import C01-S3LogStack
+from common.c02_vpc_stack import C02-VpcStack
+from common.c03_sg_stack import C03-SGStack
 
 app = cdk.App()
-Common-01-S3LogStack(app, "Common-01-S3LogStack",)
-Common_02_VpcStack(app, "Common_02_VpcStack",)
-Common_03_SGStack(app, "Common_03_SGStack",)
+C01-S3LogStack(app, "C01-S3LogStack",)
+C02-VpcStack(app, "C02-VpcStack",)
+C03-SGStack(app, "C03-SGStack",)
 app.synth()
