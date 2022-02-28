@@ -58,3 +58,11 @@ Resources:
           Value: !Ref ServiceName
         - Key: Env
           Value: !Ref EnvName
+
+  SNSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: enableEmailNotification
+    Properties:
+      Endpoint: !Ref NotificationEMailAddress
+      Protocol: email
+      TopicArn: !Ref SNSTopic
