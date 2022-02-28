@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SNS from CloudWatch Alarm
+
+#-----------------------------------------------------------------------------------#
+Parameters:
+#-----------------------------------------------------------------------------------#
+  ServiceName:
+    Type: String
+    Description: "input your System(Project) Name"
+    AllowedPattern: '[a-z0-9][a-z0-9-]*[a-z0-9]'
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - load
+      - dev
+      - stg
+      - prod
+  NotificationEMailAddress:
+    Type: String
+    Description: "If you want to receive CloudWatch Alarm notifications, please enter your email address. It is blank if you do not receive it. "
+
+#-----------------------------------------------------------------------------------#
+Metadata:
+#-----------------------------------------------------------------------------------#
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Common Configuration"
+        Parameters: 
+          - ServiceName
+          - EnvName
+      - 
+        Label: 
+          default: "CloudWatch Alarm Configuration"
+        Parameters: 
+          - NotificationEMailAddress
+
+#-----------------------------------------------------------------------------------#
+Conditions:
+#-----------------------------------------------------------------------------------#
+  enableEmailNotification: !Not [ !Equals [!Ref NotificationEMailAddress , ""] ]
+
+#-----------------------------------------------------------------------------------#
+Resources:
+#-----------------------------------------------------------------------------------#
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub ${ServiceName}-${EnvName}-cloudwatch-alarm-notification
+      TopicName: !Sub ${ServiceName}-${EnvName}-cloudwatch-alarm-notification
+      Tags:
+        - Key: Name
+          Value: !Ref ServiceName
+        - Key: Env
+          Value: !Ref EnvName
+
+  SNSSubscription:
+    Type: "AWS::SNS::Subscription"
+    Condition: enableEmailNotification
+    Properties:
+      Endpoint: !Ref NotificationEMailAddress
+      Protocol: email
+      TopicArn: !Ref SNSTopic
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: default_statement_ID
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - SNS:GetTopicAttributes
+              - SNS:SetTopicAttributes
+              - SNS:AddPermission
+              - SNS:RemovePermission
+              - SNS:DeleteTopic
+              - SNS:Subscribe
+              - SNS:ListSubscriptionsByTopic
+              - SNS:Publish
+              - SNS:Receive
+            Resource: !Ref SNSTopic
+            Condition:
+              StringEquals:
+                'AWS:SourceOwner': !Ref AWS::AccountId
+          - Sid: AWSCloudWatchAlarmSNSPublishingPermissions
+            Effect: Allow
+            Principal:
+              Service: 
+                - cloudwatch.amazonaws.com
+                - events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SNSTopic
+      Topics:
+        - !Ref SNSTopic
+
+Outputs:
+  AWSCloudWatchAlarmSNSTopicArn:
+    Value: !Ref SNSTopic
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-cwalarm-topic
