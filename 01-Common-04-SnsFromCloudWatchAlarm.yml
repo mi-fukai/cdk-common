@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: SNS from CloudWatch Alarm
+Description: Create SecurityGroup.
 
 #-----------------------------------------------------------------------------------#
 Parameters:
@@ -9,7 +9,7 @@ Parameters:
     Description: "input your System(Project) Name"
     AllowedPattern: '[a-z0-9][a-z0-9-]*[a-z0-9]'
 
-    EnvName:
+  EnvName:
     Type: String
     Default: dev
     AllowedValues:
@@ -18,10 +18,69 @@ Parameters:
       - stg
       - prod
 
-    NotificationEMailAddress:
+  DatabaseType:
+      Type: String
+      Default: MySQL
+      AllowedValues:
+        - MySQL
+        - PostgreSQL
+        - "Not Use"
+
+  UseVPCEndPoint:
     Type: String
-    Description: "If you want to receive CloudWatch Alarm notifications, please enter your email address. It is blank if you do not receive it. "
-    Default: ""
+    Description: "Choose whether to create a VPC endpoint"
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseBlueGreenDeploy:
+    Type: String
+    Description: "Choose whether to use Blue/Green deployment with ALB"
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseElastiCache:
+    Type: String
+    Description: "Choose whether to use ElastiCache"
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseEFS:
+    Type: String
+    Description: "Choose whether to use Elastic File System"
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseEcsXray:
+    Type: String
+    Description: "Add a container for the X-Ray daemon to ECS."
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseElasticSearch:
+    Type: String
+    Description: "Choose whether to use ElasticSearch service."
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  UseAWSBatch:
+    Type: String
+    Description: "Choose whether to use AWS Batch service."
+    Default: false
+    AllowedValues:
+      - true
+      - false
 
 #-----------------------------------------------------------------------------------#
 Metadata:
@@ -36,75 +95,389 @@ Metadata:
           - EnvName
       - 
         Label: 
-          default: "CloudWatch Alarm Configuration"
+          default: "SecurityGroup Configuration"
         Parameters: 
-          - NotificationEMailAddress
+          - DatabaseType
+          - UseVPCEndPoint
+          - UseBlueGreenDeploy
+          - UseEcsXray
+          - UseElastiCache
+          - UseEFS
+          - UseElasticSearch
+          - UseAWSBatch
+
+#-----------------------------------------------------------------------------------#
+Mappings:
+#-----------------------------------------------------------------------------------#
+  SouerceIp:
+    Mynavi:
+      Ip1: 210.190.113.128/25 # マイナビグループIPアドレス (インターネットゲートウェイ)
+      Ip2: 52.68.180.3/32     # AWS外部踏み台1 (csys-gate-1.sys.mynavi.jp)
+      Ip3: 52.69.15.135/32    # AWS外部踏み台2 (csys-gate-2.sys.mynavi.jp)
+  Database:
+    MySQL:
+      Port: 3306
+    PostgreSQL:
+      Port: 5432
+    
 
 #-----------------------------------------------------------------------------------#
 Conditions:
 #-----------------------------------------------------------------------------------#
-  enableEmailNotification: !Not [ !Equals [!Ref NotificationEMailAddress , ""] ]
+  IsDatabaseUse: !Not [ !Equals [!Ref DatabaseType , "Not Use"]]
+  IsUseVPCEndPoint: !Equals [true, !Ref UseVPCEndPoint]
+  IsUseBlueGreenDeploy: !Equals [true, !Ref UseBlueGreenDeploy]
+  IsUseElastiCache: !Equals [true, !Ref UseElastiCache]
+  IsUseEFS: !Equals [true, !Ref UseEFS]
+  IsUseEcsXray: !And [ !Equals [!Ref UseBlueGreenDeploy , "true"] , !Equals [!Ref UseEcsXray , "true"] ]
+  IsUseElasticSearch: !Equals [true, !Ref UseElasticSearch]
+  IsUseAWSBatch: !Equals [true, !Ref UseAWSBatch]
 
 #-----------------------------------------------------------------------------------#
 Resources:
 #-----------------------------------------------------------------------------------#
-  SNSTopic:
-    Type: AWS::SNS::Topic
+  #---------------------------------------------------------------------------------#
+  # SecutiryGroup
+  #---------------------------------------------------------------------------------#
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      DisplayName: !Sub ${ServiceName}-${EnvName}-cloudwatch-alarm-notification
-      TopicName: !Sub ${ServiceName}-${EnvName}-cloudwatch-alarm-notification
-      Tags:
-        - Key: Name
-          Value: !Ref ServiceName
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for ALB.
+      SecurityGroupIngress:
+        !If 
+          - IsUseBlueGreenDeploy
+          -
+            - IpProtocol            : tcp
+              FromPort              : 80
+              ToPort                : 80
+              CidrIp                : 0.0.0.0/0	
+            - IpProtocol            : tcp
+              FromPort              : 8080
+              ToPort                : 8080
+              CidrIp                : 0.0.0.0/0	
+            - IpProtocol            : tcp
+              FromPort              : 443
+              ToPort                : 443
+              CidrIp                : 0.0.0.0/0
+          - 
+            - IpProtocol            : tcp
+              FromPort              : 80
+              ToPort                : 80
+              CidrIp                : 0.0.0.0/0	
+            - IpProtocol            : tcp
+              FromPort              : 443
+              ToPort                : 443
+              CidrIp                : 0.0.0.0/0
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-alb
+        - Key: Env
+          Value: !Ref EnvName
+  EC2BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for EC2 Bastion.
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 22
+          ToPort                : 22
+          CidrIp                : !FindInMap [ SouerceIp, Mynavi, Ip1 ]
+          Description           : "Mynavi Global IP Address"
+        - IpProtocol            : tcp
+          FromPort              : 22
+          ToPort                : 22
+          CidrIp                : !FindInMap [ SouerceIp, Mynavi, Ip2 ]
+          Description           : "csys-gate-1.sys.mynavi.jp IP Address"
+        - IpProtocol            : tcp
+          FromPort              : 22
+          ToPort                : 22
+          CidrIp                : !FindInMap [ SouerceIp, Mynavi, Ip3 ]
+          Description           : "csys-gate-2.sys.mynavi.jp IP Address"
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-ec2-bastion
+        - Key: Env
+          Value: !Ref EnvName
+  EC2BatchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for EC2 Batch Server.
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 22
+          ToPort                : 22
+          SourceSecurityGroupId : !Ref EC2BastionSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-ec2-batch
+        - Key: Env
+          Value: !Ref EnvName
+  EC2ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for EC2.
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 80
+          ToPort                : 80
+          SourceSecurityGroupId : !Ref ALBSecurityGroup
+        - IpProtocol            : tcp
+          FromPort              : 22
+          ToPort                : 22
+          SourceSecurityGroupId : !Ref EC2BastionSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-ec2-application
+        - Key: Env
+          Value: !Ref EnvName
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsDatabaseUse
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for RDS.
+      SecurityGroupIngress :
+        !If 
+          - IsUseBlueGreenDeploy
+          -
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2BatchSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2BastionSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref ECSSecurityGroup
+          -
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2BatchSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              ToPort                : !FindInMap [ Database, !Ref DatabaseType, Port ]
+              SourceSecurityGroupId : !Ref EC2BastionSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-RDS
+        - Key: Env
+          Value: !Ref EnvName
+  EC2VPCEndPointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseVPCEndPoint
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for EC2 VPC Endpoint.
+      SecurityGroupIngress :
+        - 
+          IpProtocol: "-1" 
+          SourceSecurityGroupId: !Ref EC2BastionSecurityGroup
+        - 
+          IpProtocol: "-1"
+          SourceSecurityGroupId: !Ref EC2BatchSecurityGroup
+        - 
+          IpProtocol: "-1"
+          SourceSecurityGroupId: !Ref EC2ApplicationSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-ec2-vpc-endpoint
+        - Key: Env
+          Value: !Ref EnvName
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseBlueGreenDeploy
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for ECS Service.
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 80
+          ToPort                : 80
+          SourceSecurityGroupId : !Ref ALBSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-ecs
+        - Key: Env
+          Value: !Ref EnvName
+  ForECSXray:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: IsUseEcsXray
+    Properties:
+      GroupId: !Ref ECSSecurityGroup
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref ECSSecurityGroup
+      SourceSecurityGroupOwnerId: !Ref AWS::AccountId
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseElastiCache
+    Properties:
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: "SecurityGroup for ElastiCache."
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 6379
+          ToPort                : 6379
+          SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-elasticache
+        - Key: Env
+          Value: !Ref EnvName   
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseEFS
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub ${ServiceName}-${EnvName}-VpcID
+      GroupDescription: SecurityGroup for EFS.
+      SecurityGroupIngress :
+        !If
+          - IsUseBlueGreenDeploy
+          -
+            - IpProtocol            : tcp
+              FromPort              : 2049
+              ToPort                : 2049
+              SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : 2049
+              ToPort                : 2049
+              SourceSecurityGroupId : !Ref EC2BatchSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : 2049
+              ToPort                : 2049
+              SourceSecurityGroupId : !Ref ECSSecurityGroup
+          -
+            - IpProtocol            : tcp
+              FromPort              : 2049
+              ToPort                : 2049
+              SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+            - IpProtocol            : tcp
+              FromPort              : 2049
+              ToPort                : 2049
+              SourceSecurityGroupId : !Ref EC2BatchSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-efs
         - Key: Env
           Value: !Ref EnvName
 
-  SNSSubscription:
-    Type: AWS::SNS::Subscription
-    Condition: enableEmailNotification
+  ElasticSearchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseElasticSearch
     Properties:
-      Endpoint: !Ref NotificationEMailAddress
-      Protocol: email
-      TopicArn: !Ref SNSTopic
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for Elasticsearch Service.
+      SecurityGroupIngress :
+        - IpProtocol            : tcp
+          FromPort              : 443
+          ToPort                : 443
+          SourceSecurityGroupId : !Ref EC2ApplicationSecurityGroup
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-elastic-search
+        - Key: Env
+          Value: !Ref EnvName
 
-  SNSTopicPolicy:
-    Type: AWS::SNS::TopicPolicy
+  AWSBatchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: IsUseAWSBatch
     Properties:
-      PolicyDocument:
-        Id: MyTopicPolicy
-        Version: '2012-10-17'
-        Statement:
-          - Sid: default_statement_ID
-            Effect: Allow
-            Principal:
-              AWS: '*'
-            Action:
-              - SNS:GetTopicAttributes
-              - SNS:SetTopicAttributes
-              - SNS:AddPermission
-              - SNS:RemovePermission
-              - SNS:DeleteTopic
-              - SNS:Subscribe
-              - SNS:ListSubscriptionsByTopic
-              - SNS:Publish
-              - SNS:Receive
-            Resource: !Ref SNSTopic
-            Condition:
-              StringEquals:
-                'AWS:SourceOwner': !Ref AWS::AccountId
-          - Sid: AWSCloudWatchAlarmSNSPublishingPermissions
-            Effect: Allow
-            Principal:
-              Service: 
-                - cloudwatch.amazonaws.com
-                - events.amazonaws.com
-            Action: sns:Publish
-            Resource: !Ref SNSTopic
-      Topics:
-        - !Ref SNSTopic
+      VpcId: 
+        Fn::ImportValue: !Sub "${ServiceName}-${EnvName}-VpcID"
+      GroupDescription: SecurityGroup for AWS Batch Service.
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${ServiceName}-aws-batch
+        - Key: Env
+          Value: !Ref EnvName
 
+#-----------------------------------------------------------------------------------#
 Outputs:
-  AWSCloudWatchAlarmSNSTopicArn:
-    Value: !Ref SNSTopic
+#-----------------------------------------------------------------------------------#
+  ALBSecurityGroup:
+    Value: !Ref ALBSecurityGroup
     Export:
-      Name: !Sub ${ServiceName}-${EnvName}-cwalarm-topic
+      Name: !Sub ${ServiceName}-${EnvName}-alb-securitygroup
+
+  EC2BastionSecurityGroup:
+    Value: !Ref EC2BastionSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-ec2-bastion-securitygroup
+
+  EC2BatchSecurityGroup:
+    Value: !Ref EC2BatchSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-ec2-batch-securitygroup
+
+  EC2ApplicationSecurityGroup:
+    Value: !Ref EC2ApplicationSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-ec2-application-securitygroup
+
+  RDSSecurityGroup:
+    Condition: IsDatabaseUse
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-rds-securitygroup
+  
+  EC2VPCEndPointSecurityGroup:
+    Condition: IsUseVPCEndPoint
+    Value: !Ref EC2VPCEndPointSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-ec2-vpc-endpoint-securitygroup
+
+  ECSSecurityGroup:
+    Condition: IsUseBlueGreenDeploy
+    Value: !Ref ECSSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-ecs-securitygroup
+
+  ElastiCacheSecurityGroup:
+    Condition: IsUseElastiCache
+    Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-elasticache-securitygroup
+
+  EFSSecurityGroup:
+    Condition: IsUseEFS
+    Value: !Ref EFSSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-efs-securitygroup
+
+  ElasticSearchSecurityGroup:
+    Condition: IsUseElasticSearch
+    Value: !Ref ElasticSearchSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-elastic-search-securitygroup
+
+  AWSBatchSecurityGroup:
+    Condition: IsUseAWSBatch
+    Value: !Ref AWSBatchSecurityGroup
+    Export:
+      Name: !Sub ${ServiceName}-${EnvName}-aws-batch-securitygroup
