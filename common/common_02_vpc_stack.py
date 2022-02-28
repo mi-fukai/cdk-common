@@ -6,7 +6,7 @@ from aws_cdk import (
 from constructs import Construct
 import common.constants
 
-class VpcStack(Stack):
+class Common_02_VpcStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
