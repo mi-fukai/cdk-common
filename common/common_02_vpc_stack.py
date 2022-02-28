@@ -12,4 +12,5 @@ class VpcStack(Stack):
 
         template = cfn_inc.CfnInclude(self, "Template",
             template_file="01-Common-02-VpcSubnet.yml",
+            parameters=dict(ServiceName=common.constants.SERVICE_NAME),
             preserve_logical_ids=False)
