@@ -8,7 +8,8 @@ Parameters:
     Type: String
     Description: "input your System(Project) Name"
     AllowedPattern: '[a-z0-9][a-z0-9-]*[a-z0-9]'
-  EnvName:
+
+    EnvName:
     Type: String
     Default: dev
     AllowedValues:
@@ -16,9 +17,11 @@ Parameters:
       - dev
       - stg
       - prod
-  NotificationEMailAddress:
+
+    NotificationEMailAddress:
     Type: String
     Description: "If you want to receive CloudWatch Alarm notifications, please enter your email address. It is blank if you do not receive it. "
+    Default: ""
 
 #-----------------------------------------------------------------------------------#
 Metadata:
