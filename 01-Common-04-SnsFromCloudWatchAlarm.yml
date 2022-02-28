@@ -66,3 +66,39 @@ Resources:
       Endpoint: !Ref NotificationEMailAddress
       Protocol: email
       TopicArn: !Ref SNSTopic
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: default_statement_ID
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - SNS:GetTopicAttributes
+              - SNS:SetTopicAttributes
+              - SNS:AddPermission
+              - SNS:RemovePermission
+              - SNS:DeleteTopic
+              - SNS:Subscribe
+              - SNS:ListSubscriptionsByTopic
+              - SNS:Publish
+              - SNS:Receive
+            Resource: !Ref SNSTopic
+            Condition:
+              StringEquals:
+                'AWS:SourceOwner': !Ref AWS::AccountId
+          - Sid: AWSCloudWatchAlarmSNSPublishingPermissions
+            Effect: Allow
+            Principal:
+              Service: 
+                - cloudwatch.amazonaws.com
+                - events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SNSTopic
+      Topics:
+        - !Ref SNSTopic
