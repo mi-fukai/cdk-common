@@ -60,7 +60,7 @@ Resources:
           Value: !Ref EnvName
 
   SNSSubscription:
-    Type: "AWS::SNS::Subscription"
+    Type: AWS::SNS::Subscription
     Condition: enableEmailNotification
     Properties:
       Endpoint: !Ref NotificationEMailAddress
