@@ -13,5 +13,5 @@ class S3LogStack(Stack):
 
         template = cfn_inc.CfnInclude(self, "Template",
             template_file="01-Common-01-S3Log.yml",
-            parameters=dict(ServiceName=common.constants.SERVICE_NAME),
+            parameters=dict(ServiceName=common.constants.SERVICE_NAME, EnvName=common.constants.ENV_NAME),
             preserve_logical_ids=False)
