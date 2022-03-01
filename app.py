@@ -9,8 +9,8 @@ from common.c03_securitygroup_stack import SecurityGroupStack
 from common.c04_sns_stack import SnsStack
 
 app = cdk.App()
-S3LogStack(app, "c01-S3LogStack",)
-VpcStack(app, "VpcStack",)
-SecurityGroupStack(app, "SecurityGroupStack",)
-SnsStack(app, "SnsStack",)
+S3LogStack(app, "01-S3LogStack",)
+VpcStack(app, "C02-VpcStack",)
+SecurityGroupStack(app, "C03-SecurityGroupStack",)
+SnsStack(app, "C04-SnsStack",)
 app.synth()
