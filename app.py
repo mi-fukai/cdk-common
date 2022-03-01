@@ -3,7 +3,7 @@ import os
 
 import aws_cdk as cdk
 
-from common.c01_s3log_stack import c01-S3LogStack
+from common.c01_s3log_stack import S3LogStack
 from common.c02_vpc_stack import VpcStack
 from common.c03_securitygroup_stack import SecurityGroupStack
 from common.c04_sns_stack import SnsStack
